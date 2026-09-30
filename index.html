@@ -1,0 +1,1265 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>総合都市データ・比較ダッシュボード</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'Noto Sans JP', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            500: '#0ea5e9',
+                            600: '#0284c7',
+                            900: '#0c4a6e',
+                        }
+                    },
+                    animation: {
+                        'fade-in': 'fadeIn 0.3s ease-out',
+                        'slide-up': 'slideUp 0.4s ease-out',
+                    },
+                    keyframes: {
+                        fadeIn: {
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' },
+                        },
+                        slideUp: {
+                            '0%': { opacity: '0', transform: 'translateY(10px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body {
+            background-color: #f8fafc;
+            color: #334155;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.02);
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(0,0,0,0.1);
+            border-radius: 4px;
+        }
+
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+        }
+
+        @media (hover: hover) {
+            .card-hover:hover {
+                transform: translateY(-3px);
+                box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+            }
+        }
+
+        .loader {
+            border: 3px solid rgba(14, 165, 233, 0.2);
+            border-top: 3px solid #0ea5e9;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useCallback, useRef } = React;
+
+        const BADGE_TYPES = {
+            official: { icon: 'fa-circle-check', color: 'text-emerald-700', bg: 'bg-emerald-100', border: 'border-emerald-200', label: '公式API' },
+            calc: { icon: 'fa-calculator', color: 'text-sky-700', bg: 'bg-sky-100', border: 'border-sky-200', label: '計算値' },
+            mixed: { icon: 'fa-layer-group', color: 'text-amber-700', bg: 'bg-amber-100', border: 'border-amber-200', label: '複数算出' },
+            ai: { icon: 'fa-wand-magic-sparkles', color: 'text-purple-700', bg: 'bg-purple-100', border: 'border-purple-200', label: 'AI調査' },
+            none: { icon: 'fa-circle-xmark', color: 'text-slate-500', bg: 'bg-slate-100', border: 'border-slate-200', label: 'データなし' },
+            error: { icon: 'fa-triangle-exclamation', color: 'text-rose-700', bg: 'bg-rose-100', border: 'border-rose-200', label: '取得失敗' }
+        };
+
+        const DATA_CATEGORIES = [
+            { id: 'overview', label: '概要', icon: 'fa-border-all' },
+            { id: 'population', label: '人口・世帯', icon: 'fa-users' },
+            { id: 'economy', label: '経済・産業', icon: 'fa-yen-sign' },
+            { id: 'infrastructure', label: 'インフラ・交通', icon: 'fa-train' },
+            { id: 'commercial', label: '商業・地価', icon: 'fa-store' },
+            { id: 'safety', label: '医療・安全', icon: 'fa-hospital' },
+            { id: 'compare', label: '2都市比較', icon: 'fa-code-compare' },
+            { id: 'settings', label: '設定・API', icon: 'fa-gear' }
+        ];
+
+        const apiCache = new Map();
+
+        async function fetchGeocode(query) {
+            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=jp&limit=1&addressdetails=1`;
+            const res = await fetch(url, { headers: { 'Accept-Language': 'ja-JP' } });
+            if (!res.ok) throw new Error('位置情報の取得に失敗しました');
+            const data = await res.json();
+            if (data.length === 0) throw new Error('指定された都市が見つかりません');
+            return data[0];
+        }
+
+        async function fetchCitySuggestions(query) {
+            if (!query || query.trim().length === 0) return [];
+            try {
+                const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=jp&limit=6&addressdetails=1`;
+                const res = await fetch(url, { headers: { 'Accept-Language': 'ja-JP' } });
+                if (!res.ok) return [];
+                const data = await res.json();
+                
+                const results = [];
+                const seen = new Set();
+
+                data.forEach(item => {
+                    const addr = item.address || {};
+                    const pref = addr.province || addr.prefecture || addr.state || '';
+                    const city = addr.city || addr.town || addr.village || addr.suburb || addr.city_district || addr.county || item.name || '';
+                    
+                    let fullName = '';
+                    if (pref && city) {
+                        fullName = `${pref}${city}`;
+                    } else if (city) {
+                        fullName = city;
+                    } else {
+                        fullName = item.display_name.split(',')[0];
+                    }
+
+                    if (fullName && !seen.has(fullName)) {
+                        seen.add(fullName);
+                        results.push({
+                            fullName,
+                            pref,
+                            city,
+                            displayName: item.display_name
+                        });
+                    }
+                });
+
+                return results;
+            } catch (e) {
+                console.warn('Suggestions fetch error:', e);
+                return [];
+            }
+        }
+
+        async function fetchWikidata(cityName) {
+            const query = `
+                SELECT ?area ?pop ?date ?code WHERE {
+                  ?place rdfs:label "${cityName}"@ja ; wdt:P17 wd:Q17 .
+                  OPTIONAL { ?place wdt:P2046 ?area . }
+                  OPTIONAL { ?place wdt:P2044 ?code . }
+                  OPTIONAL {
+                    ?place p:P1082 ?popStatement .
+                    ?popStatement ps:P1082 ?pop .
+                    OPTIONAL { ?popStatement pq:P585 ?date . }
+                  }
+                } ORDER BY ASC(?date)
+            `;
+            const url = `https://query.wikidata.org/sparql?query=${encodeURIComponent(query)}&format=json`;
+            try {
+                const res = await fetch(url, { headers: { 'Accept': 'application/sparql-results+json' }});
+                if (!res.ok) throw new Error('Wikidata API error');
+                const data = await res.json();
+                
+                if (data.results.bindings.length === 0) return null;
+                
+                const bindings = data.results.bindings;
+                let area = null;
+                let code = null;
+                for (let i = bindings.length - 1; i >= 0; i--) {
+                    if (!area && bindings[i].area) area = parseFloat(bindings[i].area.value);
+                    if (!code && bindings[i].jiscode) code = bindings[i].jiscode.value;
+                    else if (!code && bindings[i].code) code = bindings[i].code.value;
+                    if (area && code) break;
+                }
+
+                const history = [];
+                const seenYears = new Set();
+                bindings.forEach(row => {
+                    if (row.pop && row.date) {
+                        const year = new Date(row.date.value).getFullYear();
+                        if (!seenYears.has(year) && year >= 1900 && year <= new Date().getFullYear()) {
+                            seenYears.add(year);
+                            history.push({ year, pop: parseInt(row.pop.value) });
+                        }
+                    }
+                });
+
+                return {
+                    area, code,
+                    pop: history.length > 0 ? history[history.length - 1].pop : null,
+                    year: history.length > 0 ? history[history.length - 1].year : null,
+                    history
+                };
+            } catch (e) {
+                console.warn("Wikidata fetch failed:", e);
+                return null;
+            }
+        }
+
+        async function fetchOSM(lat, lon, geoData) {
+            let areaQuery = '';
+            let isExactArea = false;
+            let target = '';
+            
+            if (geoData && geoData.osm_type === 'relation' && geoData.osm_id) {
+                const areaId = parseInt(geoData.osm_id) + 3600000000;
+                areaQuery = `area(${areaId})->.searchArea;`;
+                target = '(area.searchArea)';
+                isExactArea = true;
+            } else {
+                target = `(around:5000,${lat},${lon})`;
+            }
+
+            const query = `
+                [out:json][timeout:25];
+                ${areaQuery}
+                ( node["railway"="station"]${target}; way["railway"="station"]${target}; )->.stations;
+                ( node["shop"]${target}; way["shop"]${target}; )->.shops;
+                ( node["amenity"~"restaurant|cafe|fast_food|bar|pub"]${target}; way["amenity"~"restaurant|cafe|fast_food|bar|pub"]${target}; )->.foods;
+                ( node["amenity"~"hospital|clinic|doctors"]${target}; way["amenity"~"hospital|clinic|doctors"]${target}; )->.medicals;
+                ( node["amenity"~"school|kindergarten|university|college"]${target}; way["amenity"~"school|kindergarten|university|college"]${target}; )->.edus;
+                
+                make stat 
+                  stations=stations.count(nodes) + stations.count(ways),
+                  shops=shops.count(nodes) + shops.count(ways),
+                  foods=foods.count(nodes) + foods.count(ways),
+                  medicals=medicals.count(nodes) + medicals.count(ways),
+                  edus=edus.count(nodes) + edus.count(ways);
+                out;
+            `;
+
+            const url = `https://overpass-api.de/api/interpreter`;
+            try {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `data=${encodeURIComponent(query)}`
+                });
+                
+                if (!res.ok) throw new Error('OSM API error');
+                const data = await res.json();
+                
+                if (data && data.elements && data.elements.length > 0) {
+                    const stats = data.elements[0].tags;
+                    return {
+                        station: parseInt(stats.stations || 0),
+                        shop: parseInt(stats.shops || 0),
+                        food: parseInt(stats.foods || 0),
+                        medical: parseInt(stats.medicals || 0),
+                        edu: parseInt(stats.edus || 0),
+                        isExactArea
+                    };
+                }
+                return null;
+            } catch (e) {
+                console.warn("OSM fetch failed:", e);
+                return null;
+            }
+        }
+
+        async function fetchAIData(cityName, missingItems) {
+            const apiKey = ""; 
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+            
+            const itemsListStr = missingItems.map(item => `- ${item.label} (key: ${item.path.join('.')})`).join('\n');
+            
+            // プロンプトを厳格化しハルシネーションを抑制
+            const prompt = `あなたは厳密なデータアナリストです。以下の「${cityName}」に関する不足している統計データを、Google検索を用いて公式な情報源（国、自治体、信頼できる研究機関など）から調査し、結果をJSON形式で返してください。
+
+【厳守事項】
+1. 推測、AIによる独自計算、架空の数値は絶対に含めないでください（ハルシネーションの禁止）。
+2. 検索して明確な数値が見つからなかった項目は、必ず null を設定してください。
+3. 出力は以下の構造のJSONのみとし、マークダウン（\`\`\`json など）や余計なテキストは一切含めないでください。
+
+調査対象の項目:
+${itemsListStr}
+
+【出力JSONフォーマット】
+{
+  "results": [
+    {
+      "key": "カテゴリ.キー名 (例: economy.income)",
+      "value": 数値 (例: 3500000。カンマなしの数値のみ。不明な場合は null),
+      "unit": "単位 (例: 円)",
+      "year": 調査年 (例: 2023。不明な場合は "-"),
+      "source": "情報源名 (例: 〇〇市公式HP, 総務省統計局 など)"
+    }
+  ]
+}`;
+
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                tools: [{ "google_search": {} }],
+                generationConfig: {
+                    temperature: 0.1, // 事実重視のため低いtemperatureに設定
+                    responseMimeType: "application/json"
+                }
+            };
+
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            
+            if (!response.ok) {
+                throw new Error(`AI API request failed: ${response.status}`);
+            }
+            
+            const result = await response.json();
+            if (result.candidates && result.candidates.length > 0 &&
+                result.candidates[0].content && result.candidates[0].content.parts &&
+                result.candidates[0].content.parts.length > 0) {
+                let jsonText = result.candidates[0].content.parts[0].text;
+                jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
+                return JSON.parse(jsonText);
+            }
+            throw new Error("AIからの応答が不正です");
+        }
+
+        function createEmptyDataItem(label) {
+            return { value: null, unit: '', year: '-', source: '-', type: 'none', label };
+        }
+
+        function parseCityName(displayName, fallbackQuery) {
+            const parts = displayName.split(',').map(p => p.trim());
+            let pref = "", city = fallbackQuery;
+            for (const part of parts) {
+                if (part === "日本") continue;
+                if (!pref && part.match(/(都|道|府|県)$/)) {
+                    pref = part;
+                } else if (part.match(/(市|区|町|村)$/)) {
+                    city = part;
+                }
+            }
+            return { pref, city };
+        }
+
+        const CitySearchInput = ({ query, setQuery, onSearch, searchMode, activeMode, setActiveMode, placeholder, iconClass, btnBgClass, btnText }) => {
+            const [suggestions, setSuggestions] = useState([]);
+            const [showSuggestions, setShowSuggestions] = useState(false);
+            const [loadingSuggest, setLoadingSuggest] = useState(false);
+            const wrapperRef = useRef(null);
+            const debounceTimer = useRef(null);
+
+            useEffect(() => {
+                const handleClickOutside = (event) => {
+                    if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+                        setShowSuggestions(false);
+                    }
+                };
+                document.addEventListener('mousedown', handleClickOutside);
+                return () => document.removeEventListener('mousedown', handleClickOutside);
+            }, []);
+
+            const handleInputChange = (e) => {
+                const val = e.target.value;
+                setQuery(val);
+                setActiveMode(searchMode);
+
+                if (debounceTimer.current) clearTimeout(debounceTimer.current);
+
+                if (val.trim().length >= 1) {
+                    setLoadingSuggest(true);
+                    debounceTimer.current = setTimeout(async () => {
+                        const results = await fetchCitySuggestions(val);
+                        setSuggestions(results);
+                        setLoadingSuggest(false);
+                        setShowSuggestions(true);
+                    }, 300);
+                } else {
+                    setSuggestions([]);
+                    setShowSuggestions(false);
+                    setLoadingSuggest(false);
+                }
+            };
+
+            const handleSelectSuggestion = (suggestedName) => {
+                setQuery(suggestedName);
+                setShowSuggestions(false);
+                onSearch(suggestedName, searchMode);
+            };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                setShowSuggestions(false);
+                onSearch(query, searchMode);
+            };
+
+            return (
+                <div ref={wrapperRef} className="relative w-full sm:w-64">
+                    <form onSubmit={handleSubmit} className="relative">
+                        <input 
+                            type="text" 
+                            value={query}
+                            onChange={handleInputChange}
+                            onFocus={() => {
+                                setActiveMode(searchMode);
+                                if (suggestions.length > 0) setShowSuggestions(true);
+                            }}
+                            className={`w-full bg-slate-800 text-white border ${activeMode === searchMode ? 'border-brand-500 ring-1 ring-brand-500' : 'border-slate-700'} rounded-lg py-2 pl-9 pr-12 text-sm focus:outline-none transition-all shadow-inner`} 
+                            placeholder={placeholder}
+                        />
+                        <i className={`fa-solid ${iconClass} absolute left-3 top-2.5 text-xs ${activeMode === searchMode ? 'text-brand-400' : 'text-slate-500'}`}></i>
+                        {activeMode === searchMode && (
+                            <button type="submit" className={`absolute right-1.5 top-1.5 text-xs ${btnBgClass} px-2 py-1 rounded text-white transition-colors shadow-sm`}>
+                                {btnText}
+                            </button>
+                        )}
+                    </form>
+
+                    {showSuggestions && (
+                        <div className="absolute left-0 right-0 top-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 overflow-hidden max-h-60 overflow-y-auto divide-y divide-slate-700/50">
+                            {loadingSuggest && (
+                                <div className="p-3 text-xs text-slate-400 flex items-center justify-center">
+                                    <div className="loader mr-2 !w-3.5 !h-3.5"></div> 候補を検索中...
+                                </div>
+                            )}
+                            {!loadingSuggest && suggestions.length === 0 && (
+                                <div className="p-3 text-xs text-slate-400 text-center">一致する自治体が見つかりません</div>
+                            )}
+                            {!loadingSuggest && suggestions.map((item, idx) => (
+                                <div 
+                                    key={idx}
+                                    onClick={() => handleSelectSuggestion(item.fullName)}
+                                    className="p-2.5 hover:bg-slate-700/80 cursor-pointer transition-colors text-left flex items-center justify-between"
+                                >
+                                    <div className="truncate">
+                                        <div className="text-xs font-semibold text-white flex items-center">
+                                            <i className="fa-solid fa-location-dot text-brand-400 text-[10px] mr-1.5"></i>
+                                            {item.fullName}
+                                        </div>
+                                        {item.pref && <div className="text-[10px] text-slate-400 mt-0.5">{item.pref}</div>}
+                                    </div>
+                                    <span className="text-[10px] bg-slate-900/60 text-slate-300 px-1.5 py-0.5 rounded shrink-0 ml-2">選択</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        async function fetchEstat(cityCode, apiKey) {
+            if (!apiKey || !cityCode) return null;
+            
+            const cleanCode = cityCode.length >= 5 ? cityCode.substring(0, 5) : cityCode;
+            const statsDataId = "0000020201";
+            const url = `https://api.e-stat.go.jp/rest/3.0/app/json/getStatsData?appId=${apiKey}&statsDataId=${statsDataId}&cdArea=${cleanCode}&limit=1000`;
+            
+            try {
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('e-Stat API HTTP Error');
+                const json = await res.json();
+                
+                if (json.GET_STATS_DATA.RESULT.STATUS !== 0) {
+                    console.warn('e-Stat API Error:', json.GET_STATS_DATA.RESULT.ERROR_MSG);
+                    return null;
+                }
+                
+                const values = json.GET_STATS_DATA.STATISTICAL_DATA.DATA_INF.VALUE;
+                if (!values || !Array.isArray(values)) return null;
+                
+                const getLatestData = (catId) => {
+                    const matched = values.filter(v => v['@cat01'] === catId && v['$'] !== '-' && v['$']);
+                    if (matched.length === 0) return null;
+                    matched.sort((a, b) => parseInt(b['@time']) - parseInt(a['@time']));
+                    const latest = matched[0];
+                    return {
+                        value: parseFloat(latest['$']),
+                        year: latest['@time'].substring(0, 4), 
+                    };
+                };
+                
+                return {
+                    totalPop: getLatestData('A1101'),
+                    malePop: getLatestData('A110101'),
+                    femalePop: getLatestData('A110102'),
+                    businesses: getLatestData('C1101')
+                };
+            } catch (err) {
+                console.error('e-Stat API fetch failed:', err);
+                return null;
+            }
+        }
+
+        async function getCityData(query, estatApiKey) {
+            if (apiCache.has(query)) return apiCache.get(query);
+
+            const geoData = await fetchGeocode(query);
+            const lat = parseFloat(geoData.lat);
+            const lon = parseFloat(geoData.lon);
+            const cityName = parseCityName(geoData.display_name, query);
+
+            const results = await Promise.allSettled([
+                fetchWikidata(cityName.city),
+                fetchOSM(lat, lon, geoData)
+            ]);
+
+            const wikiResult = results[0].status === 'fulfilled' ? results[0].value : null;
+            const osmResult = results[1].status === 'fulfilled' ? results[1].value : null;
+
+            let estatResult = null;
+            if (estatApiKey && wikiResult && wikiResult.code) {
+                estatResult = await fetchEstat(wikiResult.code, estatApiKey);
+            }
+
+            const curYear = new Date().getFullYear();
+            const data = {
+                meta: {
+                    query,
+                    pref: cityName.pref,
+                    city: cityName.city,
+                    lat, lon,
+                    updatedAt: new Date().toISOString()
+                },
+                population: {
+                    total: estatResult?.totalPop ? { value: estatResult.totalPop.value, unit: '人', year: estatResult.totalPop.year, source: 'e-Stat', type: 'official' } : 
+                           wikiResult?.pop ? { value: wikiResult.pop, unit: '人', year: wikiResult.year, source: 'Wikidata', type: 'official' } : createEmptyDataItem('総人口'),
+                    density: (wikiResult?.pop && wikiResult?.area) ? { value: Math.round((estatResult?.totalPop?.value || wikiResult.pop) / wikiResult.area), unit: '人/km²', year: (estatResult?.totalPop?.year || wikiResult.year), source: '計算', type: 'calc' } : createEmptyDataItem('人口密度'),
+                    male: estatResult?.malePop ? { value: estatResult.malePop.value, unit: '人', year: estatResult.malePop.year, source: 'e-Stat', type: 'official' } : createEmptyDataItem('男性人口'),
+                    female: estatResult?.femalePop ? { value: estatResult.femalePop.value, unit: '人', year: estatResult.femalePop.year, source: 'e-Stat', type: 'official' } : createEmptyDataItem('女性人口'),
+                    history: wikiResult?.history || []
+                },
+                economy: {
+                    gdp: createEmptyDataItem('GDP'),
+                    income: createEmptyDataItem('平均年収'),
+                    companies: estatResult?.businesses ? { value: estatResult.businesses.value, unit: '所', year: estatResult.businesses.year, source: 'e-Stat', type: 'official' } : createEmptyDataItem('事業所数'),
+                },
+                infrastructure: {
+                    area: wikiResult?.area ? { value: wikiResult.area.toFixed(2), unit: 'km²', year: curYear, source: 'Wikidata', type: 'official' } : createEmptyDataItem('面積'),
+                    stations: osmResult ? { value: osmResult.station, unit: '駅', year: curYear, source: 'OSM', type: 'official' } : createEmptyDataItem('鉄道駅数'),
+                    stationDensity: (osmResult && wikiResult?.area && osmResult.station > 0) ? { value: (osmResult.station / wikiResult.area).toFixed(3), unit: '駅/km²', year: curYear, source: '計算', type: 'calc' } : createEmptyDataItem('駅密度'),
+                    buildings: createEmptyDataItem('建築物数'),
+                },
+                commercial: {
+                    shops: osmResult ? { value: osmResult.shop, unit: '店舗', year: curYear, source: 'OSM', type: 'official' } : createEmptyDataItem('小売店数'),
+                    food: osmResult ? { value: osmResult.food, unit: '店舗', year: curYear, source: 'OSM', type: 'official' } : createEmptyDataItem('飲食店数'),
+                    landPrice: createEmptyDataItem('平均地価'),
+                },
+                safety: {
+                    medical: osmResult ? { value: osmResult.medical, unit: '施設', year: curYear, source: 'OSM', type: 'official' } : createEmptyDataItem('医療・福祉機関'),
+                    edu: osmResult ? { value: osmResult.edu, unit: '施設', year: curYear, source: 'OSM', type: 'official' } : createEmptyDataItem('教育機関'),
+                    crime: createEmptyDataItem('刑法犯認知件数'),
+                }
+            };
+
+            apiCache.set(query, data);
+            return data;
+        }
+
+        const Badge = ({ type }) => {
+            const config = BADGE_TYPES[type] || BADGE_TYPES.none;
+            return (
+                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${config.bg} ${config.color} ${config.border} shadow-sm`}>
+                    <i className={`fa-solid ${config.icon} mr-1`}></i>
+                    {config.label}
+                </span>
+            );
+        };
+
+        const DataCard = ({ item, title, icon, colorClass = "text-sky-500", highlight = false }) => {
+            const isNull = !item || item.value === null || item.value === undefined;
+            const displayValue = isNull ? "データなし" : item.value.toLocaleString();
+            
+            return (
+                <div className={`glass-panel rounded-xl p-4 card-hover flex flex-col h-full transition-all duration-300 ${highlight ? 'ring-2 ring-brand-400 bg-brand-50/50' : 'bg-white'}`}>
+                    <div className="flex justify-between items-start mb-3">
+                        <h3 className="text-xs font-semibold text-slate-600 flex items-center">
+                            <div className={`w-6 h-6 rounded-full bg-slate-50 flex items-center justify-center mr-2 shadow-inner border border-slate-100`}>
+                                <i className={`fa-solid ${icon} ${colorClass} text-xs`}></i>
+                            </div>
+                            {title || item?.label}
+                        </h3>
+                        <Badge type={item?.type || 'none'} />
+                    </div>
+                    
+                    <div className="flex-grow flex flex-col justify-center my-1">
+                        <div className="flex items-baseline space-x-1">
+                            <span className={`text-2xl font-bold tracking-tight ${isNull ? 'text-slate-300' : 'text-slate-800'}`}>
+                                {displayValue}
+                            </span>
+                            {!isNull && <span className="text-xs text-slate-500 font-medium">{item.unit}</span>}
+                        </div>
+                    </div>
+
+                    <div className="mt-3 pt-2 border-t border-slate-100 flex justify-between items-center text-[10px] text-slate-400">
+                        <span className="flex items-center"><i className="fa-regular fa-calendar mr-1"></i>{item?.year || '-'}</span>
+                        <span className="truncate ml-2 flex items-center" title={item?.source}>
+                            <i className="fa-solid fa-database mr-1"></i>{item?.source || '-'}
+                        </span>
+                    </div>
+                </div>
+            );
+        };
+
+        const SimpleChart = ({ data, title, type = 'line' }) => {
+            const canvasRef = useRef(null);
+            const chartRef = useRef(null);
+
+            useEffect(() => {
+                if (!canvasRef.current || !data || data.length === 0) return;
+
+                const ctx = canvasRef.current.getContext('2d');
+                if (chartRef.current) chartRef.current.destroy();
+
+                chartRef.current = new Chart(ctx, {
+                    type: type,
+                    data: {
+                        labels: data.map(d => `${d.year}年`),
+                        datasets: [{
+                            label: '総人口',
+                            data: data.map(d => d.pop),
+                            borderColor: '#0ea5e9',
+                            backgroundColor: 'rgba(14, 165, 233, 0.15)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4,
+                            pointBackgroundColor: '#fff',
+                            pointBorderColor: '#0ea5e9',
+                            pointBorderWidth: 2,
+                            pointRadius: 3,
+                            pointHoverRadius: 5
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { intersect: false, mode: 'index' },
+                        plugins: { 
+                            legend: { display: false },
+                            tooltip: {
+                                backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                                titleFont: { family: 'Inter', size: 12 },
+                                bodyFont: { family: 'Inter', size: 13, weight: 'bold' },
+                                padding: 10, cornerRadius: 8, displayColors: false,
+                                callbacks: {
+                                    label: function(context) { return context.parsed.y.toLocaleString() + ' 人'; }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: { grid: { display: false }, ticks: { font: { family: 'Inter', size: 10 }, color: '#64748b' } },
+                            y: { 
+                                grid: { color: '#f1f5f9', borderDash: [4, 4] }, 
+                                ticks: { 
+                                    font: { family: 'Inter', size: 10 }, 
+                                    color: '#64748b',
+                                    callback: function(value) { return value >= 10000 ? (value / 10000) + '万' : value; }
+                                },
+                                beginAtZero: false
+                            }
+                        }
+                    }
+                });
+
+                return () => { if (chartRef.current) chartRef.current.destroy(); };
+            }, [data, type]);
+
+            return (
+                <div className="glass-panel rounded-xl p-5 bg-white flex flex-col h-[320px] card-hover">
+                    <h3 className="text-sm font-semibold text-slate-700 mb-4 flex items-center">
+                        <i className="fa-solid fa-chart-line mr-2 text-brand-500"></i>{title}
+                    </h3>
+                    {(!data || data.length === 0) ? (
+                        <div className="flex-1 flex flex-col items-center justify-center text-sm text-slate-400 bg-slate-50 rounded-lg border border-dashed border-slate-200">
+                            <i className="fa-solid fa-chart-simple text-3xl mb-2 text-slate-300"></i>
+                            履歴データがありません
+                        </div>
+                    ) : (
+                        <div className="flex-1 relative w-full"><canvas ref={canvasRef}></canvas></div>
+                    )}
+                </div>
+            );
+        };
+
+        const OverviewTab = ({ cityData }) => {
+            if (!cityData) return null;
+            return (
+                <div className="space-y-6 animate-slide-up">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <DataCard item={cityData.population.total} icon="fa-users" colorClass="text-brand-600" highlight={true} />
+                        <DataCard item={cityData.infrastructure.area} icon="fa-ruler-combined" colorClass="text-emerald-600" />
+                        <DataCard item={cityData.population.density} icon="fa-arrows-to-circle" colorClass="text-amber-600" />
+                        <DataCard item={cityData.infrastructure.stations} icon="fa-train" colorClass="text-indigo-600" />
+                    </div>
+                    
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div className="lg:col-span-2">
+                            <SimpleChart data={cityData.population.history} title="人口推移 (Wikidata)" />
+                        </div>
+                        
+                        <div className="glass-panel bg-white p-5 rounded-xl flex flex-col h-[320px] card-hover">
+                            <h3 className="text-sm font-semibold text-slate-700 mb-4 flex items-center border-b border-slate-100 pb-3">
+                                <i className="fa-solid fa-list-ul mr-2 text-brand-500"></i>都市ファシリティ (周辺指標)
+                            </h3>
+                            <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                                {[
+                                    { icon: 'fa-store', color: 'text-orange-500', bg: 'bg-orange-100', label: '小売店舗', data: cityData.commercial.shops },
+                                    { icon: 'fa-utensils', color: 'text-rose-500', bg: 'bg-rose-100', label: '飲食店', data: cityData.commercial.food },
+                                    { icon: 'fa-hospital', color: 'text-emerald-500', bg: 'bg-emerald-100', label: '医療機関', data: cityData.safety.medical },
+                                    { icon: 'fa-graduation-cap', color: 'text-indigo-500', bg: 'bg-indigo-100', label: '教育機関', data: cityData.safety.edu },
+                                ].map((item, idx) => (
+                                    <div key={idx} className="flex justify-between items-center p-3 rounded-lg border border-slate-100 hover:bg-slate-50 transition-colors">
+                                        <div className="flex items-center">
+                                            <div className={`w-8 h-8 rounded-full ${item.bg} flex items-center justify-center mr-3`}>
+                                                <i className={`fa-solid ${item.icon} ${item.color} text-sm`}></i>
+                                            </div>
+                                            <span className="text-sm font-medium text-slate-700">{item.label}</span>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="font-bold text-slate-800">{item.data.value?.toLocaleString() || '-'}</span>
+                                            <span className="text-[10px] text-slate-500 ml-1">施設</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            {!cityData.meta.isExactArea && (
+                                <p className="text-[10px] text-slate-400 mt-3 text-center">※中心点から半径5km圏内の推定値を含みます</p>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const GridTab = ({ dataGroup, icons }) => {
+            if (!dataGroup) return null;
+            return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 animate-slide-up">
+                    {Object.entries(dataGroup).map(([key, item]) => {
+                        if (key === 'history') return null;
+                        return <DataCard key={key} item={item} icon={icons[key] || 'fa-chart-pie'} colorClass="text-slate-600" />;
+                    })}
+                </div>
+            );
+        };
+
+        const ComparisonTab = ({ city1, city2 }) => {
+            if (!city1 || !city2) return (
+                <div className="flex flex-col items-center justify-center h-[500px] bg-white rounded-xl border border-dashed border-slate-300 text-slate-500 animate-fade-in">
+                    <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-4">
+                        <i className="fa-solid fa-code-compare text-4xl text-slate-400"></i>
+                    </div>
+                    <p className="font-medium text-slate-600">比較データが不足しています</p>
+                    <p className="text-sm mt-2">画面上部の検索バーに2つの都市名を入力して検索してください。</p>
+                </div>
+            );
+
+            const Row = ({ label, item1, item2, icon }) => {
+                const v1 = item1?.value;
+                const v2 = item2?.value;
+                const isNum1 = typeof v1 === 'number';
+                const isNum2 = typeof v2 === 'number';
+                
+                let h1 = '', h2 = '', icon1 = '', icon2 = '';
+                if (isNum1 && isNum2) {
+                    if (v1 > v2) { h1 = 'bg-brand-50 text-brand-700 font-bold'; icon1 = '<i class="fa-solid fa-caret-up text-brand-500 mr-1"></i>'; }
+                    else if (v2 > v1) { h2 = 'bg-indigo-50 text-indigo-700 font-bold'; icon2 = '<i class="fa-solid fa-caret-up text-indigo-500 mr-1"></i>'; }
+                }
+
+                return (
+                    <div className="grid grid-cols-3 gap-4 py-2.5 px-4 border-b border-slate-100 hover:bg-slate-50 transition-colors items-center">
+                        <div className="text-sm font-medium text-slate-600 flex items-center truncate pr-2">
+                            <i className={`fa-solid ${icon} w-5 text-center mr-2 text-slate-400`}></i> 
+                            <span className="truncate">{label}</span>
+                        </div>
+                        <div className={`text-right px-3 py-1.5 rounded-md text-sm ${h1}`}>
+                            <span dangerouslySetInnerHTML={{__html: icon1}}></span>
+                            {v1 != null ? `${v1.toLocaleString()} ` : '- '}
+                            <span className="text-[10px] font-normal text-slate-500">{item1?.unit}</span>
+                        </div>
+                        <div className={`text-right px-3 py-1.5 rounded-md text-sm ${h2}`}>
+                            <span dangerouslySetInnerHTML={{__html: icon2}}></span>
+                            {v2 != null ? `${v2.toLocaleString()} ` : '- '}
+                            <span className="text-[10px] font-normal text-slate-500">{item2?.unit}</span>
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="glass-panel bg-white rounded-xl overflow-hidden animate-slide-up shadow-md flex flex-col h-auto max-h-[75vh]">
+                    <div className="grid grid-cols-3 gap-4 bg-slate-800 p-4 sm:p-5 text-white items-center shrink-0">
+                        <div className="font-medium text-slate-300 text-sm hidden sm:block">比較指標</div>
+                        <div className="font-medium text-slate-300 text-sm sm:hidden"><i className="fa-solid fa-list"></i></div>
+                        <div className="text-right">
+                            <div className="text-[10px] sm:text-xs text-brand-300">{city1.meta.pref}</div>
+                            <div className="text-lg sm:text-xl font-bold truncate">{city1.meta.city}</div>
+                        </div>
+                        <div className="text-right">
+                            <div className="text-[10px] sm:text-xs text-indigo-300">{city2.meta.pref}</div>
+                            <div className="text-lg sm:text-xl font-bold truncate">{city2.meta.city}</div>
+                        </div>
+                    </div>
+                    
+                    <div className="p-2 overflow-y-auto custom-scrollbar flex-1 pb-6">
+                        <div className="bg-slate-100/50 px-4 py-2 text-xs font-bold text-slate-500 mt-2 mb-1 rounded flex items-center">
+                            <i className="fa-solid fa-users mr-2 text-slate-400"></i>人口・世帯
+                        </div>
+                        <Row label="総人口" item1={city1.population.total} item2={city2.population.total} icon="fa-user-group" />
+                        <Row label="人口密度" item1={city1.population.density} item2={city2.population.density} icon="fa-arrows-to-circle" />
+                        <Row label="男性人口" item1={city1.population.male} item2={city2.population.male} icon="fa-person" />
+                        <Row label="女性人口" item1={city1.population.female} item2={city2.population.female} icon="fa-person-dress" />
+                        
+                        <div className="bg-slate-100/50 px-4 py-2 text-xs font-bold text-slate-500 mt-6 mb-1 rounded flex items-center">
+                            <i className="fa-solid fa-yen-sign mr-2 text-slate-400"></i>経済・産業
+                        </div>
+                        <Row label="GDP" item1={city1.economy.gdp} item2={city2.economy.gdp} icon="fa-coins" />
+                        <Row label="平均年収" item1={city1.economy.income} item2={city2.economy.income} icon="fa-money-bill-wave" />
+                        <Row label="事業所数" item1={city1.economy.companies} item2={city2.economy.companies} icon="fa-building" />
+
+                        <div className="bg-slate-100/50 px-4 py-2 text-xs font-bold text-slate-500 mt-6 mb-1 rounded flex items-center">
+                            <i className="fa-solid fa-train-tram mr-2 text-slate-400"></i>都市インフラ・交通
+                        </div>
+                        <Row label="面積" item1={city1.infrastructure.area} item2={city2.infrastructure.area} icon="fa-ruler-combined" />
+                        <Row label="鉄道駅数" item1={city1.infrastructure.stations} item2={city2.infrastructure.stations} icon="fa-train" />
+                        <Row label="駅密度" item1={city1.infrastructure.stationDensity} item2={city2.infrastructure.stationDensity} icon="fa-chart-area" />
+                        <Row label="建築物数" item1={city1.infrastructure.buildings} item2={city2.infrastructure.buildings} icon="fa-city" />
+
+                        <div className="bg-slate-100/50 px-4 py-2 text-xs font-bold text-slate-500 mt-6 mb-1 rounded flex items-center">
+                            <i className="fa-solid fa-store mr-2 text-slate-400"></i>商業・地価
+                        </div>
+                        <Row label="小売店数" item1={city1.commercial.shops} item2={city2.commercial.shops} icon="fa-store" />
+                        <Row label="飲食店数" item1={city1.commercial.food} item2={city2.commercial.food} icon="fa-utensils" />
+                        <Row label="平均地価" item1={city1.commercial.landPrice} item2={city2.commercial.landPrice} icon="fa-map-location-dot" />
+
+                        <div className="bg-slate-100/50 px-4 py-2 text-xs font-bold text-slate-500 mt-6 mb-1 rounded flex items-center">
+                            <i className="fa-solid fa-shield-heart mr-2 text-slate-400"></i>医療・安全・教育
+                        </div>
+                        <Row label="医療機関" item1={city1.safety.medical} item2={city2.safety.medical} icon="fa-hospital" />
+                        <Row label="教育機関" item1={city1.safety.edu} item2={city2.safety.edu} icon="fa-graduation-cap" />
+                        <Row label="刑法犯認知件数" item1={city1.safety.crime} item2={city2.safety.crime} icon="fa-shield-halved" />
+                    </div>
+                </div>
+            );
+        };
+
+        const SettingsTab = ({ apiKey, setApiKey }) => (
+            <div className="glass-panel bg-white p-6 md:p-8 rounded-xl max-w-2xl mx-auto animate-slide-up shadow-sm">
+                <div className="flex items-center mb-6 border-b border-slate-100 pb-4">
+                    <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center mr-4">
+                        <i className="fa-solid fa-gear text-slate-600 text-lg"></i>
+                    </div>
+                    <div>
+                        <h2 className="text-xl font-bold text-slate-800">システム設定</h2>
+                        <p className="text-xs text-slate-500">APIキーの設定とデータの詳細情報</p>
+                    </div>
+                </div>
+                
+                <div className="bg-brand-50 border border-brand-200 text-brand-800 p-4 rounded-lg text-sm mb-8 flex items-start">
+                    <i className="fa-solid fa-circle-info mt-0.5 mr-3 text-brand-500"></i>
+                    <div>
+                        <p className="font-medium mb-1">e-Stat API連携</p>
+                        <p className="text-xs text-brand-700/80">
+                            e-StatのアプリケーションID(appId)を設定することで、国勢調査や経済センサスなどの公式統計データ（男女別人口、事業所数など）をリアルタイムに取得・統合します。
+                        </p>
+                    </div>
+                </div>
+
+                <div className="mb-8">
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">e-Stat Application ID</label>
+                    <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <i className="fa-solid fa-key text-slate-400"></i>
+                        </div>
+                        <input 
+                            type="password" 
+                            value={apiKey} 
+                            onChange={(e) => setApiKey(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-300 rounded-lg pl-10 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all" 
+                            placeholder="appIdを入力 (未設定でも基本機能は利用可能です)"
+                        />
+                    </div>
+                </div>
+                
+                <div className="pt-6 border-t border-slate-100">
+                    <h3 className="text-sm font-bold text-slate-700 mb-3">データの信頼性とバッジの意味</h3>
+                    <div className="space-y-3 bg-slate-50 p-4 rounded-lg">
+                        <div className="flex items-start">
+                            <div className="w-24 shrink-0"><Badge type="official" /></div>
+                            <span className="text-xs text-slate-600 ml-2 pt-0.5">公的機関や信頼できるオープンデータソースから直接取得した実数データ。</span>
+                        </div>
+                        <div className="flex items-start">
+                            <div className="w-24 shrink-0"><Badge type="calc" /></div>
+                            <span className="text-xs text-slate-600 ml-2 pt-0.5">取得した公式データを元に、ダッシュボード内で自動計算された指標（人口密度など）。</span>
+                        </div>
+                        <div className="flex items-start">
+                            <div className="w-24 shrink-0"><Badge type="ai" /></div>
+                            <span className="text-xs text-slate-600 ml-2 pt-0.5">Gemini APIによりウェブ上の公式・信頼できる情報源から動的に調査・抽出したデータ。</span>
+                        </div>
+                        <div className="flex items-start">
+                            <div className="w-24 shrink-0"><Badge type="none" /></div>
+                            <span className="text-xs text-slate-600 ml-2 pt-0.5">現在APIから提供されていない、または取得できなかった項目。推測値による補完は行いません。</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+
+        const App = () => {
+            const [activeTab, setActiveTab] = useState('overview');
+            const [query1, setQuery1] = useState('東京都新宿区');
+            const [query2, setQuery2] = useState('');
+            const [searchMode, setSearchMode] = useState(1);
+            
+            const [city1Data, setCity1Data] = useState(null);
+            const [city2Data, setCity2Data] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState(null);
+            
+            const [estatApiKey, setEstatApiKey] = useState(localStorage.getItem('estat_api_key') || '');
+            
+            const [aiLoading, setAiLoading] = useState(false);
+            const [aiMessage, setAiMessage] = useState(null);
+
+            useEffect(() => {
+                localStorage.setItem('estat_api_key', estatApiKey);
+            }, [estatApiKey]);
+
+            const handleSearch = async (targetQuery, mode) => {
+                const q = targetQuery !== undefined ? targetQuery : (mode === 1 ? query1 : query2);
+                if (!q || !q.trim()) return;
+                
+                setLoading(true);
+                setError(null);
+                try {
+                    const data = await getCityData(q, estatApiKey);
+                    if (mode === 1) {
+                        setCity1Data(data);
+                        if (activeTab === 'compare') setActiveTab('overview');
+                    } else {
+                        setCity2Data(data);
+                        if (activeTab !== 'compare') setActiveTab('compare');
+                    }
+                } catch (err) {
+                    setError(`[${q}] の取得エラー: ${err.message}`);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleAIAugment = async () => {
+                const targetData = searchMode === 1 ? city1Data : city2Data;
+                if (!targetData) return;
+                
+                const missingItems = [];
+                Object.entries(targetData).forEach(([catKey, catData]) => {
+                    if (catKey === 'meta' || catKey === 'population') {
+                        if (catKey === 'population' && targetData.population.history) {}
+                    }
+                    
+                    if (typeof catData === 'object' && catKey !== 'meta') {
+                        Object.entries(catData).forEach(([itemKey, itemVal]) => {
+                            if (itemKey !== 'history' && itemVal && itemVal.type === 'none') {
+                                missingItems.push({
+                                    path: [catKey, itemKey],
+                                    label: itemVal.label
+                                });
+                            }
+                        });
+                    }
+                });
+
+                if (missingItems.length === 0) {
+                    setAiMessage({ type: 'info', text: '不足しているデータ項目はありません。' });
+                    return;
+                }
+
+                setAiLoading(true);
+                setAiMessage(null);
+
+                try {
+                    const aiData = await fetchAIData(targetData.meta.city, missingItems);
+                    
+                    if (aiData && aiData.results) {
+                        const newData = { ...targetData };
+                        let updateCount = 0;
+
+                        aiData.results.forEach(result => {
+                            if (!result.key || result.value === null) return;
+                            
+                            const [cat, item] = result.key.split('.');
+                            if (newData[cat] && newData[cat][item]) {
+                                newData[cat][item] = {
+                                    value: result.value,
+                                    unit: result.unit || '',
+                                    year: result.year || '-',
+                                    source: result.source || 'AI調査',
+                                    type: 'ai',
+                                    label: newData[cat][item].label
+                                };
+                                updateCount++;
+                            }
+                        });
+
+                        if (updateCount > 0) {
+                            newData.meta.updatedAt = new Date().toISOString();
+                            if (searchMode === 1) setCity1Data(newData);
+                            else setCity2Data(newData);
+                            
+                            apiCache.set(newData.meta.query, newData);
+                            
+                            setAiMessage({ type: 'success', text: `AIが ${updateCount} 項目のデータを補完しました。` });
+                        } else {
+                            setAiMessage({ type: 'info', text: '新しいデータは見つかりませんでした。' });
+                        }
+                    }
+                } catch (err) {
+                    console.error("AI Augmentation Error:", err);
+                    setAiMessage({ type: 'error', text: `AIによるデータ収集に失敗しました: ${err.message}` });
+                } finally {
+                    setAiLoading(false);
+                }
+            };
+
+            const currentData = searchMode === 1 ? city1Data : city2Data;
+
+            return (
+                <div className="min-h-screen flex flex-col font-sans">
+                    <header className="bg-slate-900 text-white shadow-lg z-20 sticky top-0">
+                        <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between">
+                            <div className="flex items-center space-x-3">
+                                <div className="w-8 h-8 bg-brand-500 rounded-lg flex items-center justify-center shadow-inner">
+                                    <i className="fa-solid fa-building text-white text-sm"></i>
+                                </div>
+                                <h1 className="text-lg font-bold tracking-tight hidden sm:block">
+                                    Urban<span className="text-brand-400">Metrics</span>
+                                </h1>
+                            </div>
+                            
+                            <div className="flex items-center space-x-2 md:space-x-4">
+                                <CitySearchInput 
+                                    query={query1} 
+                                    setQuery={setQuery1} 
+                                    onSearch={handleSearch} 
+                                    searchMode={1} 
+                                    activeMode={searchMode} 
+                                    setActiveMode={setSearchMode}
+                                    placeholder="メイン都市を検索..."
+                                    iconClass="fa-magnifying-glass"
+                                    btnBgClass="bg-brand-500 hover:bg-brand-400"
+                                    btnText="検索"
+                                />
+                                <div className="text-slate-500 hidden md:block text-xs font-bold px-1">VS</div>
+                                <CitySearchInput 
+                                    query={query2} 
+                                    setQuery={setQuery2} 
+                                    onSearch={handleSearch} 
+                                    searchMode={2} 
+                                    activeMode={searchMode} 
+                                    setActiveMode={setSearchMode}
+                                    placeholder="比較都市を検索..."
+                                    iconClass="fa-code-compare"
+                                    btnBgClass="bg-indigo-500 hover:bg-indigo-400"
+                                    btnText="比較"
+                                />
+                            </div>
+                        </div>
+                        
+                        <div className="bg-slate-800/50 border-t border-slate-800 overflow-x-auto no-scrollbar">
+                            <div className="max-w-7xl mx-auto px-4 md:px-6 flex space-x-1">
+                                {DATA_CATEGORIES.map(cat => (
+                                    <button
+                                        key={cat.id}
+                                        onClick={() => setActiveTab(cat.id)}
+                                        className={`px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors border-b-2 flex items-center ${
+                                            activeTab === cat.id 
+                                                ? 'border-brand-400 text-white bg-slate-800/80' 
+                                                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                                        }`}
+                                    >
+                                        <i className={`fa-solid ${cat.icon} mr-2 ${activeTab === cat.id ? 'text-brand-400' : 'text-slate-500'}`}></i>
+                                        {cat.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="flex-1 max-w-7xl w-full mx-auto px-4 md:px-6 py-8 relative">
+                        {loading && (
+                            <div className="absolute inset-0 z-10 bg-slate-50/50 backdrop-blur-[2px] flex items-center justify-center rounded-xl transition-all">
+                                <div className="bg-white p-5 rounded-xl shadow-xl flex flex-col items-center">
+                                    <div className="loader !w-10 !h-10 !border-4 !border-brand-100 !border-t-brand-500 mb-3"></div>
+                                    <p className="text-sm font-bold text-slate-700 animate-pulse">データを集計中...</p>
+                                    <p className="text-[10px] text-slate-400 mt-1">各種APIから情報を取得しています</p>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {aiLoading && (
+                            <div className="absolute inset-0 z-10 bg-slate-50/50 backdrop-blur-[2px] flex items-center justify-center rounded-xl transition-all">
+                                <div className="bg-white p-5 rounded-xl shadow-xl flex flex-col items-center">
+                                    <div className="loader !w-10 !h-10 !border-4 !border-purple-100 !border-t-purple-500 mb-3"></div>
+                                    <p className="text-sm font-bold text-slate-700 animate-pulse">AIが調査中...</p>
+                                    <p className="text-[10px] text-slate-400 mt-1">ウェブ検索を利用して最新データを補完しています</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {aiMessage && (
+                            <div className={`mb-6 px-5 py-4 rounded-lg shadow-sm border-l-4 flex items-start animate-fade-in ${
+                                aiMessage.type === 'success' ? 'bg-emerald-50 border-emerald-500 text-emerald-800' :
+                                aiMessage.type === 'error' ? 'bg-rose-50 border-rose-500 text-rose-800' :
+                                'bg-sky-50 border-sky-500 text-sky-800'
+                            }`}>
+                                <i className={`fa-solid mt-0.5 mr-3 ${
+                                    aiMessage.type === 'success' ? 'fa-circle-check text-emerald-500' :
+                                    aiMessage.type === 'error' ? 'fa-circle-xmark text-rose-500' :
+                                    'fa-circle-info text-sky-500'
+                                }`}></i>
+                                <div>
+                                    <p className="text-sm font-medium">{aiMessage.text}</p>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {error && (
+                            <div className="bg-rose-50 border-l-4 border-rose-500 text-rose-700 px-5 py-4 rounded-r-lg shadow-sm mb-6 flex items-start animate-fade-in">
+                                <i className="fa-solid fa-triangle-exclamation mt-0.5 mr-3 text-rose-500"></i>
+                                <div>
+                                    <h3 className="font-bold text-sm">データ取得エラー</h3>
+                                    <p className="text-sm mt-1">{error}</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {currentData && activeTab !== 'compare' && activeTab !== 'settings' && (
+                            <div className="mb-8 flex flex-col md:flex-row justify-between items-end pb-4 border-b border-slate-200/60">
+                                <div className="animate-fade-in">
+                                    <div className="flex items-center mb-1">
+                                        <span className="text-xs font-bold text-slate-500 bg-slate-200/80 px-2.5 py-0.5 rounded-full mr-2 shadow-sm border border-slate-300/50">
+                                            {currentData?.meta.pref}
+                                        </span>
+                                        {searchMode === 2 && <span className="text-[10px] text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full font-medium">比較対象</span>}
+                                    </div>
+                                    <h2 className="text-3xl md:text-4xl font-extrabold text-slate-800 tracking-tight">
+                                        {currentData?.meta.city}
+                                    </h2>
+                                </div>
+                                <div className="flex flex-col items-end gap-3 mt-4 md:mt-0">
+                                    <button 
+                                        onClick={handleAIAugment} 
+                                        disabled={aiLoading || loading}
+                                        className="text-xs font-medium bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white px-4 py-2 rounded-full shadow-md transition-all hover:shadow-lg flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <i className="fa-solid fa-wand-magic-sparkles mr-2"></i>
+                                        AIで不足データを補完
+                                    </button>
+                                    <div className="text-xs text-slate-400 flex items-center bg-white px-3 py-1.5 rounded-full border border-slate-100 shadow-sm">
+                                        <i className="fa-solid fa-clock-rotate-left mr-1.5 text-slate-300"></i>
+                                        最終更新: {currentData ? new Date(currentData.meta.updatedAt).toLocaleTimeString('ja-JP', {hour: '2-digit', minute:'2-digit'}) : '-'}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="relative min-h-[400px]">
+                            {activeTab === 'overview' && <OverviewTab cityData={currentData} />}
+                            
+                            {activeTab === 'population' && currentData && (
+                                <GridTab dataGroup={currentData.population} icons={{total:'fa-users', density:'fa-arrows-to-circle', male:'fa-person', female:'fa-person-dress'}} />
+                            )}
+                            
+                            {activeTab === 'economy' && currentData && (
+                                <GridTab dataGroup={currentData.economy} icons={{gdp:'fa-coins', income:'fa-money-bill-wave', companies:'fa-building'}} />
+                            )}
+                            
+                            {activeTab === 'infrastructure' && currentData && (
+                                <GridTab dataGroup={currentData.infrastructure} icons={{area:'fa-map', stations:'fa-train', stationDensity:'fa-chart-area', buildings:'fa-city'}} />
+                            )}
+                            
+                            {activeTab === 'commercial' && currentData && (
+                                <GridTab dataGroup={currentData.commercial} icons={{shops:'fa-store', food:'fa-utensils', landPrice:'fa-yen-sign'}} />
+                            )}
+                            
+                            {activeTab === 'safety' && currentData && (
+                                <GridTab dataGroup={currentData.safety} icons={{medical:'fa-hospital', edu:'fa-graduation-cap', crime:'fa-shield-halved'}} />
+                            )}
+
+                            {activeTab === 'compare' && <ComparisonTab city1={city1Data} city2={city2Data} />}
+                            
+                            {activeTab === 'settings' && <SettingsTab apiKey={estatApiKey} setApiKey={setEstatApiKey} />}
+                        </div>
+
+                    </main>
+                    
+                    <footer className="bg-slate-900 border-t border-slate-800 py-8 text-center mt-auto">
+                        <div className="max-w-4xl mx-auto px-4">
+                            <div className="flex justify-center space-x-4 mb-4">
+                                <span className="text-slate-400 text-sm hover:text-white transition-colors cursor-pointer"><i className="fa-brands fa-github text-xl"></i></span>
+                                <span className="text-slate-400 text-sm hover:text-white transition-colors cursor-pointer"><i className="fa-brands fa-twitter text-xl"></i></span>
+                            </div>
+                            <p className="text-xs text-slate-400 mb-2 font-medium">Data Sources: Wikidata / OpenStreetMap (Overpass API) / Nominatim</p>
+                            <p className="text-[10px] text-slate-500 leading-relaxed max-w-2xl mx-auto">
+                                本ダッシュボードはオープンAPIを利用して動的にデータを構築しています。取得タイミングやAPIの仕様により、実際の公式統計と差異がある場合があります。データの欠損については「データなし」として扱い、推測による補間は行っていません。
+                            </p>
+                            <p className="text-[10px] text-slate-600 mt-4">&copy; {new Date().getFullYear()} Urban Metrics Dashboard. All rights reserved.</p>
+                        </div>
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
